@@ -4,6 +4,19 @@ import xml.etree.ElementTree as ET
 
 from Define import *
 
+def sigmoid(x):
+    return 1 / (1 + np.exp(-x))
+
+def softmax(x):
+    return np.exp(x) / np.sum(np.exp(x), axis=0)
+
+def log_print(string, log_path = './log.txt'):
+    print(string)
+    
+    f = open(log_path, 'a+')
+    f.write(string + '\n')
+    f.close()
+
 def xml_read(xml_path, find_labels = CLASS_NAMES, normalize = False):
     tree = ET.parse(xml_path)
     root = tree.getroot()

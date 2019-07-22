@@ -1,3 +1,4 @@
+import os
 import sys
 import cv2
 import glob
@@ -10,6 +11,8 @@ from Utils import *
 from YOLOv1 import *
 from YOLO_Utils import *
 
+os.environ["CUDA_VISIBLE_DEVICES"]="0"
+
 # build
 input_var = tf.placeholder(tf.float32, [None, IMAGE_HEIGHT, IMAGE_WIDTH, IMAGE_CHANNEL])
 pred_tensor = YOLOv1(input_var, False)
@@ -17,7 +20,7 @@ pred_tensor = YOLOv1(input_var, False)
 sess = tf.Session()
 sess.run(tf.global_variables_initializer())
 
-model_path = './model/YOLOv1_109.ckpt'
+model_path = './model/YOLOv1_96.ckpt'
 saver = tf.train.Saver()
 saver.restore(sess, model_path)
 
@@ -27,7 +30,7 @@ DEBUG = False
 precision_list = []
 recall_list = []
 
-xml_paths = glob.glob("D:/DB/VOC2007/test/xml/" + "*")
+xml_paths = glob.glob("D:/_ImageDataset/VOC2007/test/xml/" + "*")
 xml_count = len(xml_paths)
 
 for index, xml_path in enumerate(xml_paths):

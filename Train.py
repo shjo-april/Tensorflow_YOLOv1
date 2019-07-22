@@ -1,3 +1,8 @@
+'''
+YOLOv1
+- Train : VOC2007 Train ++ VOC2012 Train
+- Test : VOC2007 Test 63.4%, FPS : 45
+'''
 
 import os
 import cv2
@@ -15,7 +20,7 @@ from YOLO_Utils import *
 
 from Utils import *
 
-os.environ["CUDA_VISIBLE_DEVICES"]="1"
+os.environ["CUDA_VISIBLE_DEVICES"]="0"
 
 # 1. dataset
 TRAIN_XML_DIRS = ["D:/_ImageDataset/VOC2007/train/xml/", "D:/_ImageDataset/VOC2012/xml/"]
@@ -36,9 +41,9 @@ train_xml_paths = np.asarray(train_xml_paths)
 valid_xml_paths = train_xml_paths[:int(len(train_xml_paths) * 0.1)]
 train_xml_paths = train_xml_paths[int(len(train_xml_paths) * 0.1):]
 
-print('train : {}'.format(len(train_xml_paths)))
-print('valid : {}'.format(len(valid_xml_paths)))
-print('test : {}'.format(len(test_xml_paths)))
+log_print('[i] Train : {}'.format(len(train_xml_paths)))
+log_print('[i] Valid : {}'.format(len(valid_xml_paths)))
+log_print('[i] Test : {}'.format(len(test_xml_paths)))
 
 # 2. build
 input_var = tf.placeholder(tf.float32, [None, IMAGE_HEIGHT, IMAGE_WIDTH, IMAGE_CHANNEL])
@@ -63,6 +68,7 @@ with tf.control_dependencies(extra_update_ops):
 sess = tf.Session()
 sess.run(tf.global_variables_initializer())
 
+#'''
 vgg_vars = []
 for var in vars:
     if 'vgg' in var.name:
@@ -70,23 +76,25 @@ for var in vars:
 
 vgg_saver = tf.train.Saver(var_list = vgg_vars)
 vgg_saver.restore(sess, './vgg_16/vgg_16.ckpt')
+#'''
 
 saver = tf.train.Saver()
+#saver.restore(sess, './model/YOLOv1_79.ckpt')
 
 decay_epoch = np.asarray([0.5, 0.75])
 decay_epoch *= MAX_EPOCHS
 decay_epoch = decay_epoch.astype(np.int32)
 
 lr = INIT_LR
-max_iterations = len(train_xml_paths) // BATCH_SIZE
+train_iteration = len(train_xml_paths) // BATCH_SIZE
 
 best_valid_mAP = 0.0
 
-for epoch in range(1, MAX_EPOCHS):
+for epoch in range(79 + 1, MAX_EPOCHS):
 
     if epoch in decay_epoch:
         lr /= 10
-        print('learning rate decay')
+        log_print('[i] learning rate decay : {} -> {}'.format(lr * 10, lr))
 
     loss_list = []
     
@@ -97,8 +105,10 @@ for epoch in range(1, MAX_EPOCHS):
     class_loss_list = []
     l2_reg_loss_list = []
 
+    st_time = time.time()
     np.random.shuffle(train_xml_paths)
-    for iter in range(len(train_xml_paths) // BATCH_SIZE):
+
+    for iter in range(train_iteration):
         xml_paths = train_xml_paths[iter * BATCH_SIZE : (iter + 1) * BATCH_SIZE]
 
         np_image_data, np_label_data = Encode(xml_paths, True)
@@ -118,8 +128,10 @@ for epoch in range(1, MAX_EPOCHS):
         class_loss_list.append(class_loss)
         l2_reg_loss_list.append(l2_reg_loss)
 
-        sys.stdout.write('\r[{}/{}]'.format(iter, max_iterations))
+        sys.stdout.write('\r[{}/{}]'.format(iter, train_iteration))
         sys.stdout.flush()
+
+    end_time = int(time.time() - st_time)
 
     loss = np.mean(loss_list)
     xy_loss = np.mean(xy_loss_list)
@@ -129,39 +141,39 @@ for epoch in range(1, MAX_EPOCHS):
     class_loss = np.mean(class_loss_list)
     l2_reg_loss = np.mean(l2_reg_loss_list)
     
-    print(' epoch : {}, loss : {:.4f}, xy_loss : {:.4f}, wh_loss : {:.4f}, obj_loss : {:.4f}, noobj_loss : {:.4f}, class_loss : {:.4f}, l2_reg_loss : {:.4f}'.format(epoch, loss, xy_loss, wh_loss, obj_loss, noobj_loss, class_loss, l2_reg_loss))
+    log_print(' epoch : {}, loss : {:.4f}, xy_loss : {:.4f}, wh_loss : {:.4f}, obj_loss : {:.4f}, noobj_loss : {:.4f}, class_loss : {:.4f}, l2_reg_loss : {:.4f}, time : {}sec'.format(epoch, loss, xy_loss, wh_loss, obj_loss, noobj_loss, class_loss, l2_reg_loss, end_time))
 
-    #saver.save(sess, './model/YOLOv1_{}.ckpt'.format(epoch))
-
-    # validation mAP
-    precision_list = []
-    recall_list = []
-
-    # single batch (batch_norm check)
-    for xml_path in valid_xml_paths:
-        image_path, gt_bboxes, gt_classes = xml_read(xml_path)
-
-        image = cv2.imread(image_path)
-        h, w, c = image.shape
+    if epoch % 5 == 0:
+        # validation mAP
+        precision_list = []
+        recall_list = []
         
-        image = cv2.resize(image, (IMAGE_WIDTH, IMAGE_HEIGHT)).astype(np.float32)
-        pred_encode_data = sess.run(pred_tensor, feed_dict = {input_var : [image], is_training : False})
+        for xml_path in valid_xml_paths:
+            image_path, gt_bboxes, gt_classes = xml_read(xml_path)
 
-        pred_bboxes, pred_classes = Decode(pred_encode_data[0], size = (w, h))
-        pred_bboxes, pred_classes = class_nms(pred_bboxes, pred_classes, threshold = 0.5)
+            image = cv2.imread(image_path)
+            h, w, c = image.shape
+            
+            image = cv2.resize(image, (IMAGE_WIDTH, IMAGE_HEIGHT)).astype(np.float32)
+            pred_encode_data = sess.run(pred_tensor, feed_dict = {input_var : [image], is_training : False})
 
-        precision, recall = Precision_Recall(gt_bboxes, gt_classes, pred_bboxes, pred_classes)
-    
-        precision_list.append(precision)
-        recall_list.append(recall)
+            pred_bboxes, pred_classes = Decode(pred_encode_data[0], size = (w, h))
+            pred_bboxes, pred_classes = class_nms(pred_bboxes, pred_classes, threshold = 0.5)
+        
+            precision, recall = Precision_Recall(gt_bboxes, gt_classes, pred_bboxes, pred_classes)
+        
+            precision_list.append(precision)
+            recall_list.append(recall)
 
-    precision = np.mean(precision_list) * 100
-    recall = np.mean(recall_list) * 100
-    mAP = (precision + recall) / 2
+        precision = np.mean(precision_list) * 100
+        recall = np.mean(recall_list) * 100
+        mAP = (precision + recall) / 2
 
-    print('valid mAP : {:.2f}, best valid mAP : {:.2f}%'.format(mAP, best_valid_mAP))
+        if best_valid_mAP < mAP:
+            best_valid_mAP = mAP
+            saver.save(sess, './model/YOLOv1_{}.ckpt'.format(epoch))
 
-    if best_valid_mAP < mAP:
-        best_valid_mAP = mAP
-        saver.save(sess, './model/YOLOv1_{}.ckpt'.format(epoch))
+            log_print('[i] best precision : {:.2f}%'.format(precision))
+            log_print('[i] best recall : {:.2f}%'.format(recall))
 
+        log_print('[i] valid mAP : {:.2f}, best valid mAP : {:.2f}%'.format(mAP, best_valid_mAP))

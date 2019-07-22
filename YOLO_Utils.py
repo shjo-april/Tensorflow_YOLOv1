@@ -12,7 +12,7 @@ def Encode(xml_paths, bDataAugmentation = False):
     
     np_image_data = np.zeros((BATCH_SIZE, IMAGE_HEIGHT, IMAGE_WIDTH, IMAGE_CHANNEL), np.float32)
     np_label_data = np.zeros((BATCH_SIZE, S, S, B, 5 + C), np.float32)
-    
+
     image_paths, gt_bboxes_list, gt_classes_list = [], [], []
     for xml_path in xml_paths:
         image_path, gt_bboxes, gt_classes = xml_read(xml_path, normalize = not bDataAugmentation)
@@ -44,7 +44,7 @@ def Encode(xml_paths, bDataAugmentation = False):
             h, w, c = image.shape
             gt_bboxes = gt_bboxes.astype(np.float32)
             gt_bboxes /= [w, h, w, h]
-            
+
         image = cv2.resize(image, (IMAGE_WIDTH, IMAGE_HEIGHT), interpolation = cv2.INTER_LINEAR)
         
         image_data = image.astype(np.float32)
@@ -58,7 +58,12 @@ def Encode(xml_paths, bDataAugmentation = False):
             # get grid cell
             grid_x = int(cx * S)
             grid_y = int(cy * S)
-            
+
+            # get bbox index
+            #bbox_index = 0
+            #if label_data[grid_y, grid_x, bbox_index, 4] == 1.0:
+            #    bbox_index = 1
+
             # get offset x, y
             grid_x_offset = (cx * S) - grid_x
             grid_y_offset = (cy * S) - grid_y
@@ -69,13 +74,14 @@ def Encode(xml_paths, bDataAugmentation = False):
                     label_data[grid_y, grid_x, bbox_index, 0:4] = [grid_x_offset, grid_y_offset, w, h]
                     label_data[grid_y, grid_x, bbox_index, 4] = 1.0
                     label_data[grid_y, grid_x, bbox_index, 5:] = one_hot(class_index)
+                    #break
         
         np_image_data[index] = image_data
         np_label_data[index] = label_data
             
     return np_image_data, np_label_data
 
-def Decode(encode_data, detect_threshold = 0.1, size = (IMAGE_WIDTH, IMAGE_HEIGHT)):
+def Decode(encode_data, detect_threshold = 0.1, size = (IMAGE_WIDTH, IMAGE_HEIGHT), gt = False):
 
     bboxes = []
     classes = []
@@ -86,15 +92,12 @@ def Decode(encode_data, detect_threshold = 0.1, size = (IMAGE_WIDTH, IMAGE_HEIGH
         for x in range(S):
             for bbox_index in range(B):
                 data = encode_data[y, x, bbox_index, : ]
-
-                class_prob = data[5:]
-                max_class_prob = np.max(class_prob)
-                class_index = np.argmax(class_prob)
+                if not gt:
+                    data[4] = sigmoid(data[4])
                 
                 # confidence
                 if data[4] >= detect_threshold:
                     offset_x, offset_y, w, h = data[:4]
-                    class_name = CLASS_NAMES[class_index]
 
                     cx = (x + offset_x) / S * img_w
                     cy = (y + offset_y) / S * img_h
@@ -102,6 +105,10 @@ def Decode(encode_data, detect_threshold = 0.1, size = (IMAGE_WIDTH, IMAGE_HEIGH
                     height = h * img_h
 
                     bbox = ccwh_to_xyxy([cx, cy, width, height]).astype(np.float32)
+                    if not gt:
+                        class_index = np.argmax(sigmoid(data[5:]))
+                    else:
+                        class_index = np.argmax(data[5:])
                     
                     bboxes.append(np.append(bbox, data[4]))
                     classes.append(class_index)
@@ -119,10 +126,12 @@ if __name__ == '__main__':
         for image, encode_data in zip(np_image_data, np_label_data):
             
             image = image.astype(np.uint8)
-            bboxes, classes = Decode(encode_data)
+            bboxes, classes = Decode(encode_data, gt = True)
 
             print(bboxes)
             print(classes)
+
+            print(np.sum(np_label_data[0, :, :, :, 4]))
 
             for bbox, class_index in zip(bboxes, classes):
                 xmin, ymin, xmax, ymax = bbox[:4].astype(np.int32)

@@ -27,12 +27,3 @@ CLASS_NAMES = ["aeroplane", "bicycle", "bird", "boat", "bottle", "bus", "car", "
 CLASS_DIC = {class_name : index for index, class_name in enumerate(CLASS_NAMES)}
 
 assert C == len(CLASS_NAMES), '[!] class length != C'
-
-# DataAugmentation
-'''
-For data augmentation we introduce random scaling and
-translations of up to 20% of the original image size. We
-also randomly adjust the exposure and saturation of the image
-by up to a factor of 1:5 in the HSV color space.
-'''
-

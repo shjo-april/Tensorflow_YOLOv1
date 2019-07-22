@@ -29,7 +29,13 @@ def YOLOv1_VGG(x, is_training):
     
     # YOLO
     x = tf.reshape(x, (-1, S, S, B, 5 + C))
-    x = tf.nn.sigmoid(x, name = 'yolo_outputs')
+
+    pred_xy = tf.nn.sigmoid(x[:, :, :, :, 0:2])
+    pred_wh = tf.nn.sigmoid(x[:, :, :, :, 2:4])
+    pred_conf = tf.expand_dims(x[:, :, :, :, 4], axis = -1)
+    pred_class = x[:, :, :, :, 5:]
+    x = tf.concat((pred_xy, pred_wh, pred_conf, pred_class), axis = -1, name = 'yolo_outputs')
+    
     return x
 
 YOLOv1 = YOLOv1_VGG
