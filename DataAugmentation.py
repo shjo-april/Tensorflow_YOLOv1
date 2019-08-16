@@ -68,7 +68,7 @@ def random_saturation(image, condition = [False, False, False, False, True]):
         h, s, v = cv2.split(hsv_image)
 
         s = s.astype(np.float32)
-        adjust = random.uniform(0.5, 1.5)
+        adjust = 1.5 #random.uniform(0.5, 1.5)
 
         s = np.clip(s * adjust, 0, 255).astype(np.uint8)
 
@@ -188,45 +188,34 @@ if __name__ == '__main__':
         gt_bboxes = np.asarray(gt_bboxes).astype(np.int32)
         gt_classes = np.asarray(gt_classes).astype(np.int32)
 
-        print(gt_bboxes)
-        print(gt_classes)
+        #print(gt_bboxes)
+        #print(gt_classes)
+
+        ori_image = image.copy()
 
         for bbox, class_index in zip(gt_bboxes, gt_classes):
             xmin, ymin, xmax, ymax = bbox
-            if (xmax - xmin) * (ymax - ymin) > 0.0:
-                pass
-            else:
-                print('original')
-                print(bbox)
-                print(xml_path)
-                input()
+            cv2.rectangle(ori_image, (xmin, ymin), (xmax, ymax), (0, 255, 0), 2)
 
-        # image, gt_bboxes = random_flip(image, gt_bboxes, [True])
-        # image, gt_bboxes = random_scale(image, gt_bboxes, [True])
-        # image = random_blur(image, [True])
-        # image = random_brightness(image, [True])
-        # image = random_hue(image, [True])
-        # image = random_saturation(image, [True])
-        # image = random_gray(image, [True])
+        cv2.imshow('original', ori_image)
+
+        #image, gt_bboxes = random_flip(image, gt_bboxes, [True])
+        #image, gt_bboxes = random_scale(image, gt_bboxes, [True])
+        #image = random_blur(image, [True])
+        #image = random_brightness(image, [True])
+        #image = random_hue(image, [True])
+        image = random_saturation(image, [True])
+        #image = random_gray(image, [True])
         # image, gt_bboxes, gt_classes = random_shift(image, gt_bboxes, gt_classes, [True])
-        image, gt_bboxes, gt_classes = random_crop(image, gt_bboxes, gt_classes, [True])
-        image, gt_bboxes, gt_classes = random_translate(image, gt_bboxes, gt_classes, [True])
+        # image, gt_bboxes, gt_classes = random_crop(image, gt_bboxes, gt_classes, [True])
+        #image, gt_bboxes, gt_classes = random_translate(image, gt_bboxes, gt_classes, [True])
 
         h, w, c = image.shape
 
         for bbox, _class in zip(gt_bboxes.astype(np.int32), gt_classes):
             xmin, ymin, xmax, ymax = bbox
-
-            if (xmax - xmin) * (ymax - ymin) > 0.0:
-                pass
-            else:
-                print('crop')
-                print(bbox)
-                print(xml_path)
-                input()
-
             cv2.rectangle(image, (xmin, ymin), (xmax, ymax), (0, 255, 0), 2)
 
-        cv2.imshow('show', image)
+        cv2.imshow('DataAugmentation', image)
         cv2.waitKey(0)
         

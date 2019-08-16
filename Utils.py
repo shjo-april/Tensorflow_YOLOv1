@@ -4,12 +4,6 @@ import xml.etree.ElementTree as ET
 
 from Define import *
 
-def sigmoid(x):
-    return 1 / (1 + np.exp(-x))
-
-def softmax(x):
-    return np.exp(x) / np.sum(np.exp(x), axis=0)
-
 def log_print(string, log_path = './log.txt'):
     print(string)
     
@@ -25,10 +19,9 @@ def xml_read(xml_path, find_labels = CLASS_NAMES, normalize = False):
     image_path = image_path.replace('/xml', '/image')
     image_path = glob.glob(image_path)[0]
 
-    if normalize:
-        size = root.find('size')
-        image_width = int(size.find('width').text)
-        image_height = int(size.find('height').text)
+    size = root.find('size')
+    image_width = int(size.find('width').text)
+    image_height = int(size.find('height').text)
     
     bboxes = []
     classes = []
@@ -43,10 +36,10 @@ def xml_read(xml_path, find_labels = CLASS_NAMES, normalize = False):
 
         bbox = obj.find('bndbox')
         
-        bbox_xmin = int(bbox.find('xmin').text.split('.')[0])
-        bbox_ymin = int(bbox.find('ymin').text.split('.')[0])
-        bbox_xmax = int(bbox.find('xmax').text.split('.')[0])
-        bbox_ymax = int(bbox.find('ymax').text.split('.')[0])
+        bbox_xmin = min(max(int(bbox.find('xmin').text.split('.')[0]), 0), image_width - 1)
+        bbox_ymin = min(max(int(bbox.find('ymin').text.split('.')[0]), 0), image_height - 1)
+        bbox_xmax = min(max(int(bbox.find('xmax').text.split('.')[0]), 0), image_width - 1)
+        bbox_ymax = min(max(int(bbox.find('ymax').text.split('.')[0]), 0), image_height - 1)
 
         if normalize:
             bbox_xmin /= image_width
@@ -185,5 +178,7 @@ def Precision_Recall(gt_boxes, gt_classes, pred_boxes, pred_classes, threshold_i
 
         recall = np.sum(recall_vector) / gt_boxes_cnt
         precision = np.sum(precision_vector) / pred_boxes_cnt
-
+    else:
+        precision = 1.0
+    
     return precision, recall

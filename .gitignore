@@ -1,2 +1,4 @@
-*.ckpt
-vgg_16/
+*ckpt*
+vgg_16_model/
+inception_resnet_v2_model/
+model/

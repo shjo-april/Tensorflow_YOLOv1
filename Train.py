@@ -1,8 +1,3 @@
-'''
-YOLOv1
-- Train : VOC2007 Train ++ VOC2012 Train
-- Test : VOC2007 Test 63.4%, FPS : 45
-'''
 
 import os
 import cv2
@@ -20,11 +15,14 @@ from YOLO_Utils import *
 
 from Utils import *
 
-os.environ["CUDA_VISIBLE_DEVICES"]="0"
+os.environ["CUDA_VISIBLE_DEVICES"] = "0"
 
 # 1. dataset
 TRAIN_XML_DIRS = ["D:/_ImageDataset/VOC2007/train/xml/", "D:/_ImageDataset/VOC2012/xml/"]
 TEST_XML_DIRS = ["D:/_ImageDataset/VOC2007/test/xml/"]
+
+# TRAIN_XML_DIRS = ["D:/DB/VOC2007/train/xml/", "D:/DB/VOC2012/xml/"]
+# TEST_XML_DIRS = ["D:/DB/VOC2007/test/xml/"]
 
 train_xml_paths = []
 test_xml_paths = []
@@ -57,40 +55,46 @@ loss_op, xy_loss_op, wh_loss_op, obj_loss_op, noobj_loss_op, class_loss_op = YOL
 
 vars = tf.trainable_variables()
 l2_reg_loss_op = tf.add_n([tf.nn.l2_loss(var) for var in vars]) * WEIGHT_DECAY
-
 loss_op = loss_op + l2_reg_loss_op
 
 extra_update_ops = tf.get_collection(tf.GraphKeys.UPDATE_OPS)
 with tf.control_dependencies(extra_update_ops):
-    train_op = tf.train.MomentumOptimizer(lr_var, MOMENTUM).minimize(loss_op)
+    train_op = tf.train.MomentumOptimizer(lr_var, 0.9).minimize(loss_op)
 
 # 3. train
 sess = tf.Session()
 sess.run(tf.global_variables_initializer())
 
-#'''
-vgg_vars = []
-for var in vars:
-    if 'vgg' in var.name:
-        vgg_vars.append(var)
+if PRETRAINED_MODEL_NAME == 'VGG16':
+    pretrained_vars = []
+    for var in vars:
+        if 'vgg' in var.name:
+            pretrained_vars.append(var)
 
-vgg_saver = tf.train.Saver(var_list = vgg_vars)
-vgg_saver.restore(sess, './vgg_16/vgg_16.ckpt')
-#'''
+    pretrained_saver = tf.train.Saver(var_list = pretrained_vars)
+    pretrained_saver.restore(sess, './vgg_16/vgg_16.ckpt')
+
+elif PRETRAINED_MODEL_NAME == 'InceptionResNetv2':
+    pretrained_vars = []
+    for var in tf.trainable_variables():
+        if 'Inception' in var.name:
+            pretrained_vars.append(var)
+
+    pretrained_saver = tf.train.Saver(var_list = pretrained_vars)
+    pretrained_saver.restore(sess, './inception_resnet_v2_model/inception_resnet_v2_2016_08_30.ckpt')
 
 saver = tf.train.Saver()
-#saver.restore(sess, './model/YOLOv1_79.ckpt')
 
 decay_epoch = np.asarray([0.5, 0.75])
 decay_epoch *= MAX_EPOCHS
 decay_epoch = decay_epoch.astype(np.int32)
 
 lr = INIT_LR
-train_iteration = len(train_xml_paths) // BATCH_SIZE
-
 best_valid_mAP = 0.0
 
-for epoch in range(79 + 1, MAX_EPOCHS):
+train_iteration = len(train_xml_paths) // BATCH_SIZE
+
+for epoch in range(1, MAX_EPOCHS):
 
     if epoch in decay_epoch:
         lr /= 10
@@ -105,9 +109,7 @@ for epoch in range(79 + 1, MAX_EPOCHS):
     class_loss_list = []
     l2_reg_loss_list = []
 
-    st_time = time.time()
     np.random.shuffle(train_xml_paths)
-
     for iter in range(train_iteration):
         xml_paths = train_xml_paths[iter * BATCH_SIZE : (iter + 1) * BATCH_SIZE]
 
@@ -131,8 +133,6 @@ for epoch in range(79 + 1, MAX_EPOCHS):
         sys.stdout.write('\r[{}/{}]'.format(iter, train_iteration))
         sys.stdout.flush()
 
-    end_time = int(time.time() - st_time)
-
     loss = np.mean(loss_list)
     xy_loss = np.mean(xy_loss_list)
     wh_loss = np.mean(wh_loss_list)
@@ -141,13 +141,14 @@ for epoch in range(79 + 1, MAX_EPOCHS):
     class_loss = np.mean(class_loss_list)
     l2_reg_loss = np.mean(l2_reg_loss_list)
     
-    log_print(' epoch : {}, loss : {:.4f}, xy_loss : {:.4f}, wh_loss : {:.4f}, obj_loss : {:.4f}, noobj_loss : {:.4f}, class_loss : {:.4f}, l2_reg_loss : {:.4f}, time : {}sec'.format(epoch, loss, xy_loss, wh_loss, obj_loss, noobj_loss, class_loss, l2_reg_loss, end_time))
+    log_print(' epoch : {}, loss : {:.4f}, xy_loss : {:.4f}, wh_loss : {:.4f}, obj_loss : {:.4f}, noobj_loss : {:.4f}, class_loss : {:.4f}, l2_reg_loss : {:.4f}'.format(epoch, loss, xy_loss, wh_loss, obj_loss, noobj_loss, class_loss, l2_reg_loss))
 
     if epoch % 5 == 0:
         # validation mAP
         precision_list = []
         recall_list = []
-        
+
+        # single batch (batch_norm check)
         for xml_path in valid_xml_paths:
             image_path, gt_bboxes, gt_classes = xml_read(xml_path)
 
@@ -159,7 +160,7 @@ for epoch in range(79 + 1, MAX_EPOCHS):
 
             pred_bboxes, pred_classes = Decode(pred_encode_data[0], size = (w, h))
             pred_bboxes, pred_classes = class_nms(pred_bboxes, pred_classes, threshold = 0.5)
-        
+
             precision, recall = Precision_Recall(gt_bboxes, gt_classes, pred_bboxes, pred_classes)
         
             precision_list.append(precision)
@@ -171,9 +172,10 @@ for epoch in range(79 + 1, MAX_EPOCHS):
 
         if best_valid_mAP < mAP:
             best_valid_mAP = mAP
-            saver.save(sess, './model/YOLOv1_{}.ckpt'.format(epoch))
+            saver.save(sess, './model/YOLOv1_{}_{}.ckpt'.format(PRETRAINED_MODEL_NAME, epoch))
 
             log_print('[i] best precision : {:.2f}%'.format(precision))
             log_print('[i] best recall : {:.2f}%'.format(recall))
 
         log_print('[i] valid mAP : {:.2f}, best valid mAP : {:.2f}%'.format(mAP, best_valid_mAP))
+
