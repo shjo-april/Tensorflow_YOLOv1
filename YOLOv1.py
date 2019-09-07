@@ -22,8 +22,7 @@ def YOLOv1_InceptionResNetv2(x, is_training):
 
 def YOLOv1_VGG(x, is_training):
     x -= VGG_MEAN
-    feature_maps_list = []
-
+    
     with tf.contrib.slim.arg_scope(vgg.vgg_arg_scope()):
         x = vgg.vgg_16(x, num_classes=1000, is_training=is_training, dropout_keep_prob=0.5)
     
