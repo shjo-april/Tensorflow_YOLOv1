@@ -1,181 +1,299 @@
 
+# Copyright (C) 2019 * Ltd. All rights reserved.
+# author : SangHyeon Jo <josanghyeokn@gmail.com>
+
 import os
 import cv2
 import sys
 import glob
 import time
+import random
 
 import numpy as np
 import tensorflow as tf
 
 from Define import *
-from YOLOv1 import *
-from YOLO_Loss import *
-from YOLO_Utils import *
-
 from Utils import *
+from DataAugmentation import *
+
+from YOLOv1 import *
+from YOLOv1_Utils import *
+
+from YOLO_Loss import *
 
 os.environ["CUDA_VISIBLE_DEVICES"] = "0"
 
 # 1. dataset
-TRAIN_XML_DIRS = ["D:/_ImageDataset/VOC2007/train/xml/", "D:/_ImageDataset/VOC2012/xml/"]
-TEST_XML_DIRS = ["D:/_ImageDataset/VOC2007/test/xml/"]
+train_xml_paths = [ROOT_DIR + line.strip() for line in open('./dataset/train.txt', 'r').readlines()]
+valid_xml_paths = [ROOT_DIR + line.strip() for line in open('./dataset/valid.txt', 'r').readlines()]
+valid_xml_count = len(valid_xml_paths)
 
-# TRAIN_XML_DIRS = ["D:/DB/VOC2007/train/xml/", "D:/DB/VOC2012/xml/"]
-# TEST_XML_DIRS = ["D:/DB/VOC2007/test/xml/"]
+yolov1_utils = YOLOv1_Utils()
 
-train_xml_paths = []
-test_xml_paths = []
-
-for train_xml_dir in TRAIN_XML_DIRS:
-    train_xml_paths += glob.glob(train_xml_dir + "*")
-
-for test_xml_dir in TEST_XML_DIRS:
-    test_xml_paths += glob.glob(test_xml_dir + "*")
-
-np.random.shuffle(train_xml_paths)
-train_xml_paths = np.asarray(train_xml_paths)
-
-valid_xml_paths = train_xml_paths[:int(len(train_xml_paths) * 0.1)]
-train_xml_paths = train_xml_paths[int(len(train_xml_paths) * 0.1):]
-
+open('log.txt', 'w')
 log_print('[i] Train : {}'.format(len(train_xml_paths)))
 log_print('[i] Valid : {}'.format(len(valid_xml_paths)))
-log_print('[i] Test : {}'.format(len(test_xml_paths)))
 
 # 2. build
 input_var = tf.placeholder(tf.float32, [None, IMAGE_HEIGHT, IMAGE_WIDTH, IMAGE_CHANNEL])
-label_var = tf.placeholder(tf.float32, [None, S, S, B, 5 + C])
-
+label_var = tf.placeholder(tf.float32, [None, S, S, B, 5 + CLASSES])
 is_training = tf.placeholder(tf.bool)
-lr_var = tf.placeholder(tf.float32, name = 'lr')
 
-pred_tensor = YOLOv1(input_var, is_training)
-loss_op, xy_loss_op, wh_loss_op, obj_loss_op, noobj_loss_op, class_loss_op = YOLO_Loss(pred_tensor, label_var)
+prediction_op = YOLOv1(input_var, is_training)
+log_print('[i] prediction_op : {}'.format(prediction_op))
+
+loss_op, xy_loss_op, wh_loss_op, obj_loss_op, noobj_loss_op, class_loss_op = YOLO_Loss(prediction_op, label_var)
 
 vars = tf.trainable_variables()
 l2_reg_loss_op = tf.add_n([tf.nn.l2_loss(var) for var in vars]) * WEIGHT_DECAY
 loss_op = loss_op + l2_reg_loss_op
 
-extra_update_ops = tf.get_collection(tf.GraphKeys.UPDATE_OPS)
-with tf.control_dependencies(extra_update_ops):
-    train_op = tf.train.MomentumOptimizer(lr_var, 0.9).minimize(loss_op)
+tf.summary.scalar('loss', loss_op)
+tf.summary.scalar('xy_loss', xy_loss_op)
+tf.summary.scalar('wh_loss', wh_loss_op)
+tf.summary.scalar('obj_loss', obj_loss_op)
+tf.summary.scalar('noobj_loss', noobj_loss_op)
+tf.summary.scalar('class_loss', class_loss_op)
+tf.summary.scalar('l2_regularization_Loss', l2_reg_loss_op)
+summary_op = tf.summary.merge_all()
 
+learning_rate_var = tf.placeholder(tf.float32)
+with tf.control_dependencies(tf.get_collection(tf.GraphKeys.UPDATE_OPS)):
+    train_op = tf.train.AdamOptimizer(learning_rate_var).minimize(loss_op)
+    
 # 3. train
 sess = tf.Session()
 sess.run(tf.global_variables_initializer())
 
-if PRETRAINED_MODEL_NAME == 'VGG16':
-    pretrained_vars = []
-    for var in vars:
-        if 'vgg' in var.name:
-            pretrained_vars.append(var)
+# '''
+pretrained_vars = []
+for var in vars:
+    if 'resnet_v2_50' in var.name:
+        pretrained_vars.append(var)
 
-    pretrained_saver = tf.train.Saver(var_list = pretrained_vars)
-    pretrained_saver.restore(sess, './vgg_16/vgg_16.ckpt')
-
-elif PRETRAINED_MODEL_NAME == 'InceptionResNetv2':
-    pretrained_vars = []
-    for var in tf.trainable_variables():
-        if 'Inception' in var.name:
-            pretrained_vars.append(var)
-
-    pretrained_saver = tf.train.Saver(var_list = pretrained_vars)
-    pretrained_saver.restore(sess, './inception_resnet_v2_model/inception_resnet_v2_2016_08_30.ckpt')
+pretrained_saver = tf.train.Saver(var_list = pretrained_vars)
+pretrained_saver.restore(sess, './resnet_v2_model/resnet_v2_50.ckpt')
+# '''
 
 saver = tf.train.Saver()
 
-decay_epoch = np.asarray([0.5, 0.75])
-decay_epoch *= MAX_EPOCHS
-decay_epoch = decay_epoch.astype(np.int32)
-
-lr = INIT_LR
 best_valid_mAP = 0.0
+learning_rate = INIT_LEARNING_RATE
 
 train_iteration = len(train_xml_paths) // BATCH_SIZE
+valid_iteration = len(valid_xml_paths) // BATCH_SIZE
 
-for epoch in range(1, MAX_EPOCHS):
+max_iteration = train_iteration * MAX_EPOCH
+decay_iteration = np.asarray([0.5 * max_iteration, 0.75 * max_iteration], dtype = np.int32)
 
-    if epoch in decay_epoch:
-        lr /= 10
-        log_print('[i] learning rate decay : {} -> {}'.format(lr * 10, lr))
+log_print('[i] max_iteration : {}'.format(max_iteration))
+log_print('[i] decay_iteration : {}'.format(decay_iteration))
 
-    loss_list = []
-    
-    xy_loss_list = []
-    wh_loss_list = []
-    obj_loss_list = []
-    noobj_loss_list = []
-    class_loss_list = []
-    l2_reg_loss_list = []
+loss_list = []
+xy_loss_list = []
+wh_loss_list = []
+obj_loss_list = []
+noobj_loss_list = []
+class_loss_list = []
+l2_reg_loss_list = []
+train_time = time.time()
 
-    np.random.shuffle(train_xml_paths)
-    for iter in range(train_iteration):
-        xml_paths = train_xml_paths[iter * BATCH_SIZE : (iter + 1) * BATCH_SIZE]
+train_writer = tf.summary.FileWriter('./logs/train')
+train_ops = [train_op, loss_op, xy_loss_op, wh_loss_op, obj_loss_op, noobj_loss_op, class_loss_op, l2_reg_loss_op, summary_op]
 
-        np_image_data, np_label_data = Encode(xml_paths, True)
-        _feed_dict = {input_var : np_image_data, label_var : np_label_data, is_training : True, lr_var : lr}
-        _, loss, xy_loss, wh_loss, obj_loss, noobj_loss, class_loss, l2_reg_loss = sess.run([train_op, loss_op, xy_loss_op, wh_loss_op, obj_loss_op, noobj_loss_op, class_loss_op, l2_reg_loss_op], feed_dict = _feed_dict)
+for iter in range(1, max_iteration + 1):
+    if iter in decay_iteration:
+        learning_rate /= 10
+        log_print('[i] learning rate decay : {} -> {}'.format(learning_rate * 10, learning_rate))
+
+    batch_xml_paths = random.sample(train_xml_paths, BATCH_SIZE)
+    batch_image_data, batch_label_data = yolov1_utils.Encode(batch_xml_paths, augment = True)
+
+    log = sess.run(train_ops, feed_dict = {input_var : batch_image_data, label_var : batch_label_data, is_training : True, learning_rate_var : learning_rate})
+
+    if np.isnan(log[1]):
+        print('[!]', log[1:-1])
+        input()
+
+    loss_list.append(log[1])
+    xy_loss_list.append(log[2])
+    wh_loss_list.append(log[3])
+    obj_loss_list.append(log[4])
+    noobj_loss_list.append(log[5])
+    class_loss_list.append(log[6])
+    l2_reg_loss_list.append(log[7])
+    train_writer.add_summary(log[8], iter)
+
+    if iter % LOG_ITERATION == 0:
+        loss = np.mean(loss_list)
+        xy_loss = np.mean(xy_loss_list)
+        wh_loss = np.mean(wh_loss_list)
+        obj_loss = np.mean(obj_loss_list)
+        noobj_loss = np.mean(noobj_loss_list)
+        class_loss = np.mean(class_loss_list)
+        l2_reg_loss = np.mean(l2_reg_loss_list)
+        train_time = int(time.time() - train_time)
         
-        # debug
-        #print(loss, xy_loss, wh_loss, obj_loss, noobj_loss, class_loss, l2_reg_loss)
-        assert not np.isnan(loss), "Loss = Nan !"
-        
-        loss_list.append(loss)
-        
-        xy_loss_list.append(xy_loss)
-        wh_loss_list.append(wh_loss)
-        obj_loss_list.append(obj_loss)
-        noobj_loss_list.append(noobj_loss)
-        class_loss_list.append(class_loss)
-        l2_reg_loss_list.append(l2_reg_loss)
+        log_print('[i] iter : {}, loss : {:.4f}, xy_loss : {:.4f}, wh_loss : {:.4f}, obj_loss : {:.4f}, noobj_loss : {:.4f}, class_loss : {:.4f}, l2_reg_loss : {:.4f}, train_time : {}sec'.format(iter, loss, xy_loss, wh_loss, obj_loss, noobj_loss, class_loss, l2_reg_loss, train_time))
 
-        sys.stdout.write('\r[{}/{}]'.format(iter, train_iteration))
-        sys.stdout.flush()
+        loss_list = []
+        xy_loss_list = []
+        wh_loss_list = []
+        obj_loss_list = []
+        noobj_loss_list = []
+        class_loss_list = []
+        l2_reg_loss_list = []
+        train_time = time.time()
 
-    loss = np.mean(loss_list)
-    xy_loss = np.mean(xy_loss_list)
-    wh_loss = np.mean(wh_loss_list)
-    obj_loss = np.mean(obj_loss_list)
-    noobj_loss = np.mean(noobj_loss_list)
-    class_loss = np.mean(class_loss_list)
-    l2_reg_loss = np.mean(l2_reg_loss_list)
-    
-    log_print(' epoch : {}, loss : {:.4f}, xy_loss : {:.4f}, wh_loss : {:.4f}, obj_loss : {:.4f}, noobj_loss : {:.4f}, class_loss : {:.4f}, l2_reg_loss : {:.4f}'.format(epoch, loss, xy_loss, wh_loss, obj_loss, noobj_loss, class_loss, l2_reg_loss))
+    if iter % VALID_ITERATION == 0:
+        ap_threshold = 0.5
+        nms_threshold = 0.6
 
-    if epoch % 5 == 0:
-        # validation mAP
-        precision_list = []
-        recall_list = []
+        correct_dic = {}
+        confidence_dic = {}
+        all_ground_truths_dic = {}
 
-        # single batch (batch_norm check)
-        for xml_path in valid_xml_paths:
-            image_path, gt_bboxes, gt_classes = xml_read(xml_path)
+        for class_name in CLASS_NAMES:
+            correct_dic[class_name] = []
+            confidence_dic[class_name] = []
+            all_ground_truths_dic[class_name] = 0.
 
-            image = cv2.imread(image_path)
-            h, w, c = image.shape
+        batch_image_data = []
+        batch_image_wh = []
+        batch_gt_bboxes_dic = []
+
+        valid_time = time.time()
+
+        for valid_iter, xml_path in enumerate(valid_xml_paths):
+            image_path, gt_bboxes_dic = class_xml_read(xml_path, CLASS_NAMES)
+
+            ori_image = cv2.imread(image_path)
+            image = cv2.resize(ori_image, (IMAGE_WIDTH, IMAGE_HEIGHT), interpolation = cv2.INTER_CUBIC)
             
-            image = cv2.resize(image, (IMAGE_WIDTH, IMAGE_HEIGHT)).astype(np.float32)
-            pred_encode_data = sess.run(pred_tensor, feed_dict = {input_var : [image], is_training : False})
+            batch_image_data.append(image.astype(np.float32))
+            batch_image_wh.append(ori_image.shape[:-1][::-1])
+            batch_gt_bboxes_dic.append(gt_bboxes_dic)
 
-            pred_bboxes, pred_classes = Decode(pred_encode_data[0], size = (w, h))
-            pred_bboxes, pred_classes = class_nms(pred_bboxes, pred_classes, threshold = 0.5)
+            # calculate correct/confidence
+            if len(batch_image_data) == BATCH_SIZE:
+                pred_encode_data = sess.run(prediction_op, feed_dict = {input_var : batch_image_data, is_training : False})
 
-            precision, recall = Precision_Recall(gt_bboxes, gt_classes, pred_bboxes, pred_classes)
-        
-            precision_list.append(precision)
-            recall_list.append(recall)
+                for i in range(BATCH_SIZE):
+                    gt_bboxes_dic = batch_gt_bboxes_dic[i]
+                    for class_name in list(gt_bboxes_dic.keys()):
+                        gt_bboxes = np.asarray(gt_bboxes_dic[class_name], dtype = np.float32)
 
-        precision = np.mean(precision_list) * 100
-        recall = np.mean(recall_list) * 100
-        mAP = (precision + recall) / 2
+                        gt_class = CLASS_DIC[class_name]
+                        all_ground_truths_dic[class_name] += gt_bboxes.shape[0]
 
-        if best_valid_mAP < mAP:
-            best_valid_mAP = mAP
-            saver.save(sess, './model/YOLOv1_{}_{}.ckpt'.format(PRETRAINED_MODEL_NAME, epoch))
+                        pred_bboxes, pred_classes = yolov1_utils.Decode(pred_encode_data[i], size = batch_image_wh[i], detect_threshold = 0.0, detect_class_names = [class_name], nms = True)
 
-            log_print('[i] best precision : {:.2f}%'.format(precision))
-            log_print('[i] best recall : {:.2f}%'.format(recall))
+                        if pred_bboxes.shape[0] == 0:
+                            pred_bboxes = np.zeros((1, 5), dtype = np.float32)
 
-        log_print('[i] valid mAP : {:.2f}, best valid mAP : {:.2f}%'.format(mAP, best_valid_mAP))
+                        ious = compute_bboxes_IoU(pred_bboxes, gt_bboxes)
+                        
+                        # ious >= 0.50 (AP@50)
+                        correct = np.max(ious, axis = 1) >= ap_threshold
+                        confidence = pred_bboxes[:, 4]
 
+                        correct_dic[class_name] += correct.tolist()
+                        confidence_dic[class_name] += confidence.tolist()
+
+                batch_image_data = []
+                batch_image_wh = []
+                batch_gt_bboxes_dic = []
+
+            sys.stdout.write('\r# Validation = {:.2f}%'.format(valid_iter / valid_xml_count * 100))
+            sys.stdout.flush()
+
+        if len(batch_image_data) != 0:
+            pred_encode_data = sess.run(prediction_op, feed_dict = {input_var : batch_image_data, is_training : False})
+
+            for i in range(len(batch_image_data)):
+                gt_bboxes_dic = batch_gt_bboxes_dic[i]
+                for class_name in list(gt_bboxes_dic.keys()):
+                    gt_bboxes = np.asarray(gt_bboxes_dic[class_name], dtype = np.float32)
+
+                    gt_class = CLASS_DIC[class_name]
+                    all_ground_truths_dic[class_name] += gt_bboxes.shape[0]
+                    
+                    pred_bboxes, pred_classes = yolov1_utils.Decode(pred_encode_data[i], size = batch_image_wh[i], detect_threshold = 0.0, detect_class_names = [class_name], nms = True)
+                    ious = compute_bboxes_IoU(pred_bboxes, gt_bboxes)
+
+                    # ious >= 0.50 (AP@50)
+                    correct = np.max(ious, axis = 1) >= ap_threshold
+                    confidence = pred_bboxes[:, 4]
+
+                    correct_dic[class_name] += correct.tolist()
+                    confidence_dic[class_name] += confidence.tolist()
+
+        valid_time = int(time.time() - valid_time)
+        print('\n[i] valid time = {}sec'.format(valid_time))
+
+        valid_mAP_list = []
+        for class_name in CLASS_NAMES:
+            if all_ground_truths_dic[class_name] == 0:
+                continue
+
+            correct_list = correct_dic[class_name]
+            confidence_list = confidence_dic[class_name]
+            correct_list = correct_dic[class_name]
+
+            # list -> numpy
+            confidence_list = np.asarray(confidence_list, dtype = np.float32)
+            correct_list = np.asarray(correct_list, dtype = np.bool)
+            
+            # Ascending (confidence)
+            sort_indexs = confidence_list.argsort()[::-1]
+            confidence_list = confidence_list[sort_indexs]
+            correct_list = correct_list[sort_indexs]
+            
+            correct_detections = 0
+            all_detections = 0
+
+            # calculate precision/recall
+            precision_list = []
+            recall_list = []
+
+            for confidence, correct in zip(confidence_list, correct_list):
+                all_detections += 1
+                if correct:
+                    correct_detections += 1    
+                
+                precision = correct_detections / all_detections
+                recall = correct_detections / all_ground_truths
+                
+                precision_list.append(precision)
+                recall_list.append(recall)
+
+                # maximum correct detections
+                if recall == 1.0:
+                    break
+
+            precision_list = np.asarray(precision_list, dtype = np.float32)
+            recall_list = np.asarray(recall_list, dtype = np.float32)
+            
+            # calculating the interpolation performed in 11 points (0.0 -> 1.0, +0.01)
+            precision_interp_list = []
+            interp_list = np.arange(0, 10 + 1) / 10
+
+            for interp in interp_list:
+                try:
+                    precision_interp = max(precision_list[recall_list >= interp])
+                except:
+                    precision_interp = 0.0
+                
+                precision_interp_list.append(precision_interp)
+
+            ap = np.mean(precision_interp_list) * 100
+            valid_mAP_list.append(ap)
+
+        valid_mAP = np.mean(valid_mAP_list)
+        if best_valid_mAP < valid_mAP:
+            best_valid_mAP = valid_mAP
+            saver.save(sess, './model/YOLOv1_{}.ckpt'.format(iter))
+            
+        log_print('[i] valid mAP : {:.6f}, best valid mAP : {:.6f}'.format(valid_mAP, best_valid_mAP))
+
+saver.save(sess, './model/YOLOv1.ckpt')

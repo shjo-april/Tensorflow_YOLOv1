@@ -1,56 +1,67 @@
 
-import vgg_16.VGG16 as vgg
-import inception_resnet_v2.inception as inception
-
+import numpy as np
 import tensorflow as tf
+import resnet_v2.resnet_v2 as resnet_v2
+
 from Define import *
 
-init_fn = tf.contrib.layers.xavier_initializer()
+initializer = tf.contrib.layers.xavier_initializer()
 
-def YOLOv1_InceptionResNetv2(x, is_training):
-    x = x / 127.5 - 1
-
-    with tf.contrib.slim.arg_scope(inception.inception_resnet_v2_arg_scope()):
-        x = inception.inception_resnet_v2(x, 1000, is_training = is_training)
-
-    x = tf.layers.conv2d(x, kernel_size = [1, 1], filters = B * (5 + C), strides = 1, kernel_initializer = init_fn, padding = 'same')
-    x = tf.layers.batch_normalization(x, training = is_training)
-    
-    x = tf.reshape(x, (-1, S, S, B, 5 + C))
-    x = tf.nn.sigmoid(x, name = 'yolo_outputs')
-    return x
-
-def YOLOv1_VGG(x, is_training):
-    x -= VGG_MEAN
-    
-    with tf.contrib.slim.arg_scope(vgg.vgg_arg_scope()):
-        x = vgg.vgg_16(x, num_classes=1000, is_training=is_training, dropout_keep_prob=0.5)
-    
-    for i in range(2):
-        x = tf.layers.conv2d(x, kernel_size = [1, 1], filters = 512, strides = 1, kernel_initializer = init_fn, padding='same')
-        x = tf.layers.batch_normalization(x, training = is_training)
-        x = tf.nn.relu(x)
+def conv_bn_relu(x, filters, kernel_size, strides, padding, is_training, scope, bn = True, activation = True, use_bias = True, upscaling = False):
+    with tf.variable_scope(scope):
+        if not upscaling:
+            x = tf.layers.conv2d(inputs = x, filters = filters, kernel_size = kernel_size, strides = strides, padding = padding, kernel_initializer = initializer, use_bias = use_bias, name = 'conv2d')
+        else:
+            x = tf.layers.conv2d_transpose(inputs = x, filters = filters, kernel_size = kernel_size, strides = strides, padding = padding, kernel_initializer = initializer, use_bias = use_bias, name = 'upconv2d')
         
-        x = tf.layers.conv2d(x, kernel_size = [3, 3], filters = 1024, strides = 1, kernel_initializer = init_fn, padding='same')
-        x = tf.layers.batch_normalization(x, training = is_training)
-        x = tf.nn.relu(x)
+        if bn:
+            x = tf.layers.batch_normalization(inputs = x, training = is_training, name = 'bn')
 
-    x = tf.layers.max_pooling2d(x, pool_size = [2, 2], strides = 2)
-    
-    x = tf.layers.conv2d(x, kernel_size = [1, 1], filters = B * (5 + C), strides = 1, kernel_initializer = init_fn, padding = 'same')
-    x = tf.layers.batch_normalization(x, training = is_training)
-    
-    x = tf.reshape(x, (-1, S, S, B, 5 + C))
-    x = tf.nn.sigmoid(x, name = 'yolo_outputs')
+        if activation:
+            x = tf.nn.relu(x, name = 'relu')
     return x
 
-if PRETRAINED_MODEL_NAME == 'VGG16':
-    YOLOv1 = YOLOv1_VGG
-elif PRETRAINED_MODEL_NAME == 'InceptionResNetv2':
-    YOLOv1 = YOLOv1_InceptionResNetv2
+def Decode_Layer(pred_tensors):
+    pred_cxcy = pred_tensors[..., :2]
+    pred_wh = pred_tensors[..., 2:4]
+    pred_conf = pred_tensors[..., 4]
+    pred_classes = pred_tensors[..., 5:]
+
+    pred_cxcy = tf.nn.sigmoid(pred_cxcy)
+    pred_wh = tf.nn.sigmoid(pred_wh)
+    pred_conf = tf.nn.sigmoid(pred_conf)[..., tf.newaxis]
+    pred_classes = tf.nn.sigmoid(pred_classes)
+    
+    pred_tensors = tf.concat([pred_cxcy, pred_wh, pred_conf, pred_classes], axis = -1)
+    return pred_tensors
+
+def YOLOv1_ResNetv2_50(input_var, is_training, reuse = False):
+    x = input_var - [103.939, 123.68, 116.779]
+    with tf.contrib.slim.arg_scope(resnet_v2.resnet_arg_scope()):
+        logits, end_points = resnet_v2.resnet_v2_50(x, is_training = is_training, reuse = reuse)
+    
+    # for key in end_points.keys():
+    #    print(key, end_points[key])
+    
+    with tf.variable_scope('YOLOv1', reuse = reuse):
+        x = end_points['resnet_v2_50/block4']
+
+        x = conv_bn_relu(x, 512, [3, 3], 1, 'same', is_training, 'conv1')
+        x = tf.layers.max_pooling2d(x, pool_size = [2, 2], strides = 2)
+        
+        x = conv_bn_relu(x, B * (5 + CLASSES), [3, 3], 1, 'same', is_training, 'conv2', bn = True, activation = False)
+        pred_tensors = tf.reshape(x, (-1, S, S, B, 5 + CLASSES), name = 'pred_tensors')
+        
+    pred_tensors = Decode_Layer(pred_tensors)
+    return pred_tensors
+
+YOLOv1 = YOLOv1_ResNetv2_50
 
 if __name__ == '__main__':
-    input_var = tf.placeholder(tf.float32, [None, IMAGE_HEIGHT, IMAGE_WIDTH, IMAGE_CHANNEL], name = 'images')
+    from YOLOv1_Utils import *
+
+    yolov1_utils = YOLOv1_Utils()
+    input_var = tf.placeholder(tf.float32, [None, 448, 448, 3])
+    
     pred_tensors = YOLOv1(input_var, False)
     print(pred_tensors)
-

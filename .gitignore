@@ -1,4 +1,3 @@
 *ckpt*
-vgg_16_model/
-inception_resnet_v2_model/
+resnet_v2_model/
 model/
