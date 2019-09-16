@@ -38,7 +38,7 @@
 | Model | Train | mAP@50 |
 | ----- | ------ | ------ |
 | (paper) Faster-RCNN VGG16 | Pascal VOC 2007 + 2012 | 73.2% |
-| (paper) YOLOv1 VGG16 | Pascal VOC 2007 + 2012 | 72.78% |
+| (paper) YOLOv1 VGG16 | Pascal VOC 2007 + 2012 | 66.4% |
 | (self) YOLOv1 VGG16 | Pascal VOC 2007 + 2012| 72.78% |
 | (self) YOLOv1 ResNet-v2-50 | Pascal VOC 2007 + 2012 | 68.78% |
 | (self) YOLOv1 Inception-ResNet-v2 | Pascal VOC 2007 + 2012 | 69.05% |
