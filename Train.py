@@ -36,6 +36,7 @@ input_var = tf.placeholder(tf.float32, [None, IMAGE_HEIGHT, IMAGE_WIDTH, IMAGE_C
 label_var = tf.placeholder(tf.float32, [None, S, S, B, 5 + CLASSES])
 is_training = tf.placeholder(tf.bool)
 
+yolov1_utils = YOLOv1_Utils()
 pred_tensors = YOLOv1(input_var, is_training)
 log_print('[i] pred_tensors : {}'.format(pred_tensors))
 
@@ -172,7 +173,7 @@ for iter in range(1, max_iteration + 1):
         
         total_pred_data = sess.run(pred_tensors, feed_dict = {input_var : batch_image_data, is_training : False})
         
-        for i in range(BATCH_SIZE):
+        for i in range(SAMPLES):
             image = batch_image_data[i]
             pred_bboxes, pred_classes = yolov1_utils.Decode(total_pred_data[i], detect_threshold = 0.20, size = [IMAGE_WIDTH, IMAGE_HEIGHT])
             
