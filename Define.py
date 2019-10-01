@@ -2,7 +2,7 @@
 # author : SangHyeon Jo <josanghyeokn@gmail.com>
 
 # dataset parameters
-ROOT_DIR = 'D:/_DeepLearning_DB/'
+ROOT_DIR = 'D:/DB/'
 
 CLASS_NAMES = ["aeroplane", "bicycle", "bird", "boat", "bottle", "bus", "car", "cat", "chair", "cow", "diningtable", "dog", "horse", "motorbike", "person", "pottedplant", "sheep", "sofa", "train", "tvmonitor"]
 CLASS_DIC = {class_name : index for index, class_name in enumerate(CLASS_NAMES)}
@@ -40,9 +40,9 @@ WEIGHT_DECAY = 0.0001
 
 # train
 BATCH_SIZE = 16
-INIT_LEARNING_RATE = 1e-3
+INIT_LEARNING_RATE = 1e-4
 
-MAX_EPOCH = 200
+MAX_EPOCH = 150
 
 LOG_ITERATION = 50
 SAMPLE_ITERATION = 1000

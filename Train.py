@@ -39,7 +39,7 @@ is_training = tf.placeholder(tf.bool)
 pred_tensors = YOLOv1(input_var, is_training)
 log_print('[i] pred_tensors : {}'.format(pred_tensors))
 
-loss_op, giou_loss_op, pos_conf_loss_op, neg_conf_loss_op, class_loss_op = YOLOv1_Loss(pred_tensors, label_var)
+loss_op, giou_loss_op, conf_loss_op, class_loss_op = YOLOv1_Loss(pred_tensors, label_var)
 
 vars = tf.trainable_variables()
 l2_reg_loss_op = tf.add_n([tf.nn.l2_loss(var) for var in vars]) * WEIGHT_DECAY
@@ -47,14 +47,13 @@ loss_op = loss_op + l2_reg_loss_op
 
 learning_rate_var = tf.placeholder(tf.float32)
 with tf.control_dependencies(tf.get_collection(tf.GraphKeys.UPDATE_OPS)):
-    # train_op = tf.train.AdamOptimizer(learning_rate_var).minimize(loss_op)
-    train_op = tf.train.MomentumOptimizer(learning_rate_var, momentum = 0.9).minimize(loss_op)
+    train_op = tf.train.AdamOptimizer(learning_rate_var).minimize(loss_op)
+    # train_op = tf.train.MomentumOptimizer(learning_rate_var, momentum = 0.9).minimize(loss_op)
 
 train_summary_dic = {
     'Loss/Total_Loss' : loss_op,
     'Loss/GIoU_Loss' : giou_loss_op,
-    'Loss/Positive_Confidence_Loss' : pos_conf_loss_op,
-    'Loss/Negative_Confidence_Loss' : neg_conf_loss_op,
+    'Loss/Confidence_Loss' : conf_loss_op,
     'Loss/Class_Loss' : class_loss_op,
     'Loss/L2_Regularization_Loss' : l2_reg_loss_op,
     'Learning_rate' : learning_rate_var,
@@ -99,8 +98,7 @@ log_print('[i] decay_iteration : {}'.format(decay_iteration))
 
 loss_list = []
 giou_loss_list = []
-pos_conf_loss_list = []
-neg_conf_loss_list = []
+conf_loss_list = []
 class_loss_list = []
 l2_reg_loss_list = []
 train_time = time.time()
@@ -108,11 +106,11 @@ train_time = time.time()
 sample_data_list = train_data_list[:SAMPLES]
 
 train_writer = tf.summary.FileWriter('./logs/train')
-train_ops = [train_op, loss_op, giou_loss_op, pos_conf_loss_op, neg_conf_loss_op, class_loss_op, l2_reg_loss_op, train_summary_op]
+train_ops = [train_op, loss_op, giou_loss_op, conf_loss_op, class_loss_op, l2_reg_loss_op, train_summary_op]
 
 train_threads = []
 for i in range(NUM_THREADS):
-    train_thread = Teacher('./dataset/train.npy', fcos_sizes, debug = False)
+    train_thread = Teacher('./dataset/train.npy', debug = False)
     train_thread.start()
     train_threads.append(train_thread)
 
@@ -138,27 +136,24 @@ for iter in range(1, max_iteration + 1):
 
     loss_list.append(log[1])
     giou_loss_list.append(log[2])
-    pos_conf_loss_list.append(log[3])
-    neg_conf_loss_list.append(log[4])
-    class_loss_list.append(log[5])
-    l2_reg_loss_list.append(log[6])
-    train_writer.add_summary(log[7], iter)
+    conf_loss_list.append(log[3])
+    class_loss_list.append(log[4])
+    l2_reg_loss_list.append(log[5])
+    train_writer.add_summary(log[6], iter)
 
     if iter % LOG_ITERATION == 0:
         loss = np.mean(loss_list)
         giou_loss = np.mean(giou_loss_list)
-        pos_conf_loss = np.mean(pos_conf_loss_list)
-        neg_conf_loss = np.mean(neg_conf_loss_list)
+        conf_loss = np.mean(conf_loss_list)
         class_loss = np.mean(class_loss_list)
         l2_reg_loss = np.mean(l2_reg_loss_list)
         train_time = int(time.time() - train_time)
         
-        log_print('[i] iter : {}, loss : {:.4f}, giou_loss : {:.4f}, pos_conf_loss : {:.4f}, neg_conf_loss : {:.4f}, class_loss : {:.4f}, l2_reg_loss : {:.4f}, train_time : {}sec'.format(iter, loss, giou_loss, pos_conf_loss, neg_conf_loss, class_loss, l2_reg_loss, train_time))
+        log_print('[i] iter : {}, loss : {:.4f}, giou_loss : {:.4f}, conf_loss : {:.4f}, class_loss : {:.4f}, l2_reg_loss : {:.4f}, train_time : {}sec'.format(iter, loss, giou_loss, conf_loss, class_loss, l2_reg_loss, train_time))
 
         loss_list = []
         giou_loss_list = []
-        pos_conf_loss_list = []
-        neg_conf_loss_list = []
+        conf_loss_list = []
         class_loss_list = []
         l2_reg_loss_list = []
         train_time = time.time()

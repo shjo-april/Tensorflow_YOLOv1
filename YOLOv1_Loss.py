@@ -6,6 +6,24 @@ def L2_Loss(tensor_1, tensor_2):
     return tf.pow(tensor_1 - tensor_2, 2)
 
 '''
+pt = {
+    p    , if y = 1
+    1 − p, otherwise
+}
+FL(pt) = −(1 − pt)γ * log(pt)
+'''
+def Focal_Loss(pred_classes, gt_classes, alpha = 0.25, gamma = 2):
+    with tf.variable_scope('Focal'):
+        # focal_loss = [BATCH_SIZE, S, S, B, CLASSES]
+        pt = gt_classes * pred_classes + (1 - gt_classes) * (1 - pred_classes) 
+        focal_loss = -alpha * tf.pow(1. - pt, gamma) * tf.log(pt + 1e-10)
+
+        # focal_loss = [BATCH_SIZE]
+        focal_loss = tf.reduce_sum(tf.abs(focal_loss), axis = -1)
+
+    return focal_loss
+
+'''
 GIoU = IoU - (C - (A U B))/C
 Loss = 1 - GIoU
 '''
@@ -67,23 +85,19 @@ def YOLOv1_Loss(pred_tensor, gt_tensor):
     # bboxes - xmin, ymin, xmax, ymax
     giou_loss_op = 1 - GIoU(pred_tensor[..., :4], gt_tensor[..., :4])
     
-    # confidence - cross-entropy
-    conf_loss_op = tf.nn.sigmoid_cross_entropy_with_logits(logits = pred_tensor[..., 4], labels = gt_tensor[..., 4])
+    # confidence - focal loss
+    conf_loss_op = Focal_Loss(pred_tensor[..., 4], gt_tensor[..., 4])
 
-    pos_conf_loss_op = COORD * pos_mask * conf_loss_op
-    neg_conf_loss_op = NOOBJ * neg_mask * conf_loss_op
-
-    # classification - cross-entropy
-    class_loss_op = pos_mask[..., tf.newaxis] * tf.nn.sigmoid_cross_entropy_with_logits(logits = pred_tensor[..., 5:], labels = gt_tensor[..., 5:])
+    # classification - focal loss
+    class_loss_op = Focal_Loss(pred_tensor[..., 5:], gt_tensor[..., 5:])
     
     # calculate total loss
-    giou_loss_op = tf.reduce_sum(giou_loss_op) / BATCH_SIZE
-    pos_conf_loss_op = tf.reduce_sum(pos_conf_loss_op) / BATCH_SIZE
-    neg_conf_loss_op = tf.reduce_sum(neg_conf_loss_op) / BATCH_SIZE
-    class_loss_op = tf.reduce_sum(class_loss_op) / BATCH_SIZE
-    loss_op = giou_loss_op + pos_conf_loss_op + neg_conf_loss_op + class_loss_op
+    giou_loss_op = tf.reduce_sum(pos_mask * giou_loss_op) / BATCH_SIZE
+    conf_loss_op = tf.reduce_sum(conf_loss_op) / BATCH_SIZE
+    class_loss_op = tf.reduce_sum(pos_mask * class_loss_op) / BATCH_SIZE
+    loss_op = giou_loss_op + conf_loss_op + class_loss_op
 
-    return loss_op, giou_loss_op, pos_conf_loss_op, neg_conf_loss_op, class_loss_op
+    return loss_op, giou_loss_op, conf_loss_op, class_loss_op
 
 if __name__ == '__main__':
     pred_tensors = tf.placeholder(tf.float32, [BATCH_SIZE, S, S, B, 5 + CLASSES])
