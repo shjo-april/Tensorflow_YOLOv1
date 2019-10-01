@@ -48,7 +48,7 @@ for xml_path in xml_paths:
         string = "{} : {:.2f}%".format(class_name, conf * 100)
         cv2.putText(image, string, (xmin, ymin - 10), 1, 1, (0, 255, 0))
         cv2.rectangle(image, (xmin, ymin), (xmax, ymax), (0, 255, 0), 2)
-
+    
     cv2.imshow('show', image)
     cv2.waitKey(0)
     

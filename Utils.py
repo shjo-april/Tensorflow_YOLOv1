@@ -30,7 +30,7 @@ def xml_read(xml_path, find_labels = CLASS_NAMES, normalize = False):
         label = obj.find('name').text
         if not label in find_labels:
             continue
-            
+        
         bbox = obj.find('bndbox')
         
         bbox_xmin = max(min(int(bbox.find('xmin').text.split('.')[0]), image_width - 1), 0)
@@ -114,18 +114,6 @@ def one_hot(label, classes = CLASSES):
     vector = np.zeros(classes, dtype = np.float32)
     vector[label] = 1.
     return vector
-
-def IoU_wh(bbox_wh, anchors):
-	min_widths = np.minimum(bbox_wh[0], anchors[:, 0])
-	min_heights = np.minimum(bbox_wh[1], anchors[:, 1])
-
-	area_bbox = bbox_wh[0] * bbox_wh[1]
-	area_anchors = anchors[:, 0] * anchors[:, 1]
-    
-	intersection = min_widths * min_heights
-	union = area_bbox + area_anchors - intersection
-
-	return intersection / union
 
 def compute_bboxes_IoU(bboxes_1, bboxes_2):
     area_1 = (bboxes_1[:, 2] - bboxes_1[:, 0] + 1) * (bboxes_1[:, 3] - bboxes_1[:, 1] + 1)

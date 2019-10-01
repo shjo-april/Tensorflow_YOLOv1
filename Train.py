@@ -17,50 +17,58 @@ from Utils import *
 from DataAugmentation import *
 
 from YOLOv1 import *
+from YOLOv1_Loss import *
 from YOLOv1_Utils import *
-
-from YOLO_Loss import *
 
 os.environ["CUDA_VISIBLE_DEVICES"] = "0"
 
 # 1. dataset
-train_xml_paths = [ROOT_DIR + line.strip() for line in open('./dataset/train.txt', 'r').readlines()]
-valid_xml_paths = [ROOT_DIR + line.strip() for line in open('./dataset/valid.txt', 'r').readlines()]
-valid_xml_count = len(valid_xml_paths)
-
-yolov1_utils = YOLOv1_Utils()
+train_data_list = np.load('./dataset/train.npy', allow_pickle = True)
+valid_data_list = np.load('./dataset/validation.npy', allow_pickle = True)
+valid_count = len(valid_data_list)
 
 open('log.txt', 'w')
-log_print('[i] Train : {}'.format(len(train_xml_paths)))
-log_print('[i] Valid : {}'.format(len(valid_xml_paths)))
+log_print('[i] Train : {}'.format(len(train_data_list)))
+log_print('[i] Valid : {}'.format(len(valid_data_list)))
 
 # 2. build
 input_var = tf.placeholder(tf.float32, [None, IMAGE_HEIGHT, IMAGE_WIDTH, IMAGE_CHANNEL])
 label_var = tf.placeholder(tf.float32, [None, S, S, B, 5 + CLASSES])
 is_training = tf.placeholder(tf.bool)
 
-prediction_op = YOLOv1(input_var, is_training)
-log_print('[i] prediction_op : {}'.format(prediction_op))
+pred_tensors = YOLOv1(input_var, is_training)
+log_print('[i] pred_tensors : {}'.format(pred_tensors))
 
-loss_op, xy_loss_op, wh_loss_op, obj_loss_op, noobj_loss_op, class_loss_op = YOLO_Loss(prediction_op, label_var)
+loss_op, giou_loss_op, pos_conf_loss_op, neg_conf_loss_op, class_loss_op = YOLOv1_Loss(pred_tensors, label_var)
 
 vars = tf.trainable_variables()
 l2_reg_loss_op = tf.add_n([tf.nn.l2_loss(var) for var in vars]) * WEIGHT_DECAY
 loss_op = loss_op + l2_reg_loss_op
 
-tf.summary.scalar('loss', loss_op)
-tf.summary.scalar('xy_loss', xy_loss_op)
-tf.summary.scalar('wh_loss', wh_loss_op)
-tf.summary.scalar('obj_loss', obj_loss_op)
-tf.summary.scalar('noobj_loss', noobj_loss_op)
-tf.summary.scalar('class_loss', class_loss_op)
-tf.summary.scalar('l2_regularization_Loss', l2_reg_loss_op)
-summary_op = tf.summary.merge_all()
-
 learning_rate_var = tf.placeholder(tf.float32)
 with tf.control_dependencies(tf.get_collection(tf.GraphKeys.UPDATE_OPS)):
-    train_op = tf.train.AdamOptimizer(learning_rate_var).minimize(loss_op)
-    
+    # train_op = tf.train.AdamOptimizer(learning_rate_var).minimize(loss_op)
+    train_op = tf.train.MomentumOptimizer(learning_rate_var, momentum = 0.9).minimize(loss_op)
+
+train_summary_dic = {
+    'Loss/Total_Loss' : loss_op,
+    'Loss/GIoU_Loss' : giou_loss_op,
+    'Loss/Positive_Confidence_Loss' : pos_conf_loss_op,
+    'Loss/Negative_Confidence_Loss' : neg_conf_loss_op,
+    'Loss/Class_Loss' : class_loss_op,
+    'Loss/L2_Regularization_Loss' : l2_reg_loss_op,
+    'Learning_rate' : learning_rate_var,
+}
+
+train_summary_list = []
+for name in train_summary_dic.keys():
+    value = train_summary_dic[name]
+    train_summary_list.append(tf.summary.scalar(name, value))
+train_summary_op = tf.summary.merge(train_summary_list)
+
+log_image_var = tf.placeholder(tf.float32, [None, SAMPLE_IMAGE_HEIGHT, SAMPLE_IMAGE_WIDTH, IMAGE_CHANNEL])
+log_image_op = tf.summary.image('Image/Train', log_image_var, SAMPLES)
+
 # 3. train
 sess = tf.Session()
 sess.run(tf.global_variables_initializer())
@@ -68,20 +76,20 @@ sess.run(tf.global_variables_initializer())
 # '''
 pretrained_vars = []
 for var in vars:
-    if 'resnet_v2_50' in var.name:
+    if 'resnet_v1_50' in var.name:
         pretrained_vars.append(var)
 
 pretrained_saver = tf.train.Saver(var_list = pretrained_vars)
-pretrained_saver.restore(sess, './resnet_v2_model/resnet_v2_50.ckpt')
+pretrained_saver.restore(sess, './resnet_v1_model/resnet_v1_50.ckpt')
 # '''
 
-saver = tf.train.Saver()
+saver = tf.train.Saver(max_to_keep = 30)
+# saver.restore(sess, './model/YOLOv1_{}.ckpt'.format(115000))
 
 best_valid_mAP = 0.0
 learning_rate = INIT_LEARNING_RATE
 
-train_iteration = len(train_xml_paths) // BATCH_SIZE
-valid_iteration = len(valid_xml_paths) // BATCH_SIZE
+train_iteration = len(train_data_list) // BATCH_SIZE
 
 max_iteration = train_iteration * MAX_EPOCH
 decay_iteration = np.asarray([0.5 * max_iteration, 0.75 * max_iteration], dtype = np.int32)
@@ -90,22 +98,23 @@ log_print('[i] max_iteration : {}'.format(max_iteration))
 log_print('[i] decay_iteration : {}'.format(decay_iteration))
 
 loss_list = []
-xy_loss_list = []
-wh_loss_list = []
-obj_loss_list = []
-noobj_loss_list = []
+giou_loss_list = []
+pos_conf_loss_list = []
+neg_conf_loss_list = []
 class_loss_list = []
 l2_reg_loss_list = []
 train_time = time.time()
 
 train_writer = tf.summary.FileWriter('./logs/train')
-train_ops = [train_op, loss_op, xy_loss_op, wh_loss_op, obj_loss_op, noobj_loss_op, class_loss_op, l2_reg_loss_op, summary_op]
+
+sample_data_list = train_data_list[:SAMPLES]
+train_ops = [train_op, loss_op, giou_loss_op, pos_conf_loss_op, neg_conf_loss_op, class_loss_op, l2_reg_loss_op, train_summary_op]
 
 for iter in range(1, max_iteration + 1):
     if iter in decay_iteration:
         learning_rate /= 10
         log_print('[i] learning rate decay : {} -> {}'.format(learning_rate * 10, learning_rate))
-
+    
     batch_xml_paths = random.sample(train_xml_paths, BATCH_SIZE)
     batch_image_data, batch_label_data = yolov1_utils.Encode(batch_xml_paths, augment = True)
 

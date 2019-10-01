@@ -9,7 +9,7 @@ from DataAugmentation import *
 class YOLOv1_Utils:
     def __init__(self, ):
         pass
-
+        
     def Encode(self, xml_paths, augment = False):
         np_image_data = np.zeros((BATCH_SIZE, IMAGE_HEIGHT, IMAGE_WIDTH, IMAGE_CHANNEL), np.float32)
         np_label_data = np.zeros((BATCH_SIZE, S, S, B, 5 + CLASSES), np.float32)
@@ -20,7 +20,6 @@ class YOLOv1_Utils:
             image_path, gt_bboxes, gt_classes = xml_read(xml_path, normalize = False)
             
             image = cv2.imread(image_path)
-            assert not image is None, "[!] cv2.imread : {}".format(image_path)
             
             if augment:
                 image, gt_bboxes, gt_classes = DataAugmentation(image, gt_bboxes, gt_classes)
