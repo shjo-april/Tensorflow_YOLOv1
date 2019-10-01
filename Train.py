@@ -14,7 +14,7 @@ import tensorflow as tf
 
 from Define import *
 from Utils import *
-from DataAugmentation import *
+from Teacher import *
 
 from YOLOv1 import *
 from YOLOv1_Loss import *
@@ -67,7 +67,7 @@ for name in train_summary_dic.keys():
 train_summary_op = tf.summary.merge(train_summary_list)
 
 log_image_var = tf.placeholder(tf.float32, [None, SAMPLE_IMAGE_HEIGHT, SAMPLE_IMAGE_WIDTH, IMAGE_CHANNEL])
-log_image_op = tf.summary.image('Image/Train', log_image_var, SAMPLES)
+log_image_op = tf.summary.image('Image/Train', log_image_var[..., ::-1], SAMPLES)
 
 # 3. train
 sess = tf.Session()
@@ -105,19 +105,31 @@ class_loss_list = []
 l2_reg_loss_list = []
 train_time = time.time()
 
-train_writer = tf.summary.FileWriter('./logs/train')
-
 sample_data_list = train_data_list[:SAMPLES]
+
+train_writer = tf.summary.FileWriter('./logs/train')
 train_ops = [train_op, loss_op, giou_loss_op, pos_conf_loss_op, neg_conf_loss_op, class_loss_op, l2_reg_loss_op, train_summary_op]
+
+train_threads = []
+for i in range(NUM_THREADS):
+    train_thread = Teacher('./dataset/train.npy', fcos_sizes, debug = False)
+    train_thread.start()
+    train_threads.append(train_thread)
 
 for iter in range(1, max_iteration + 1):
     if iter in decay_iteration:
         learning_rate /= 10
         log_print('[i] learning rate decay : {} -> {}'.format(learning_rate * 10, learning_rate))
-    
-    batch_xml_paths = random.sample(train_xml_paths, BATCH_SIZE)
-    batch_image_data, batch_label_data = yolov1_utils.Encode(batch_xml_paths, augment = True)
 
+    # Thread
+    find = False
+    while not find:
+        for train_thread in train_threads:
+            if train_thread.ready:
+                find = True
+                batch_image_data, batch_label_data = train_thread.get_batch_data()        
+                break
+    
     log = sess.run(train_ops, feed_dict = {input_var : batch_image_data, label_var : batch_label_data, is_training : True, learning_rate_var : learning_rate})
 
     if np.isnan(log[1]):
@@ -125,184 +137,66 @@ for iter in range(1, max_iteration + 1):
         input()
 
     loss_list.append(log[1])
-    xy_loss_list.append(log[2])
-    wh_loss_list.append(log[3])
-    obj_loss_list.append(log[4])
-    noobj_loss_list.append(log[5])
-    class_loss_list.append(log[6])
-    l2_reg_loss_list.append(log[7])
-    train_writer.add_summary(log[8], iter)
+    giou_loss_list.append(log[2])
+    pos_conf_loss_list.append(log[3])
+    neg_conf_loss_list.append(log[4])
+    class_loss_list.append(log[5])
+    l2_reg_loss_list.append(log[6])
+    train_writer.add_summary(log[7], iter)
 
     if iter % LOG_ITERATION == 0:
         loss = np.mean(loss_list)
-        xy_loss = np.mean(xy_loss_list)
-        wh_loss = np.mean(wh_loss_list)
-        obj_loss = np.mean(obj_loss_list)
-        noobj_loss = np.mean(noobj_loss_list)
+        giou_loss = np.mean(giou_loss_list)
+        pos_conf_loss = np.mean(pos_conf_loss_list)
+        neg_conf_loss = np.mean(neg_conf_loss_list)
         class_loss = np.mean(class_loss_list)
         l2_reg_loss = np.mean(l2_reg_loss_list)
         train_time = int(time.time() - train_time)
         
-        log_print('[i] iter : {}, loss : {:.4f}, xy_loss : {:.4f}, wh_loss : {:.4f}, obj_loss : {:.4f}, noobj_loss : {:.4f}, class_loss : {:.4f}, l2_reg_loss : {:.4f}, train_time : {}sec'.format(iter, loss, xy_loss, wh_loss, obj_loss, noobj_loss, class_loss, l2_reg_loss, train_time))
+        log_print('[i] iter : {}, loss : {:.4f}, giou_loss : {:.4f}, pos_conf_loss : {:.4f}, neg_conf_loss : {:.4f}, class_loss : {:.4f}, l2_reg_loss : {:.4f}, train_time : {}sec'.format(iter, loss, giou_loss, pos_conf_loss, neg_conf_loss, class_loss, l2_reg_loss, train_time))
 
         loss_list = []
-        xy_loss_list = []
-        wh_loss_list = []
-        obj_loss_list = []
-        noobj_loss_list = []
+        giou_loss_list = []
+        pos_conf_loss_list = []
+        neg_conf_loss_list = []
         class_loss_list = []
         l2_reg_loss_list = []
         train_time = time.time()
 
-    if iter % VALID_ITERATION == 0:
-        ap_threshold = 0.5
-        nms_threshold = 0.6
+    if iter % SAMPLE_ITERATION == 0:
+        sample_images = []
+        batch_image_data = np.zeros((SAMPLES, IMAGE_HEIGHT, IMAGE_WIDTH, IMAGE_CHANNEL), dtype = np.float32)
 
-        correct_dic = {}
-        confidence_dic = {}
-        all_ground_truths_dic = {}
+        for i, data in enumerate(sample_data_list):
+            image_name, gt_bboxes, gt_classes = data
 
-        for class_name in CLASS_NAMES:
-            correct_dic[class_name] = []
-            confidence_dic[class_name] = []
-            all_ground_truths_dic[class_name] = 0.
+            image = cv2.imread(ROOT_DIR + image_name)
+            tf_image = cv2.resize(image, (IMAGE_WIDTH, IMAGE_HEIGHT), interpolation = cv2.INTER_CUBIC)
 
-        batch_image_data = []
-        batch_image_wh = []
-        batch_gt_bboxes_dic = []
-
-        valid_time = time.time()
-
-        for valid_iter, xml_path in enumerate(valid_xml_paths):
-            image_path, gt_bboxes_dic = class_xml_read(xml_path, CLASS_NAMES)
-
-            ori_image = cv2.imread(image_path)
-            image = cv2.resize(ori_image, (IMAGE_WIDTH, IMAGE_HEIGHT), interpolation = cv2.INTER_CUBIC)
+            batch_image_data[i] = tf_image.copy()
+        
+        total_pred_data = sess.run(pred_tensors, feed_dict = {input_var : batch_image_data, is_training : False})
+        
+        for i in range(BATCH_SIZE):
+            image = batch_image_data[i]
+            pred_bboxes, pred_classes = yolov1_utils.Decode(total_pred_data[i], detect_threshold = 0.20, size = [IMAGE_WIDTH, IMAGE_HEIGHT])
             
-            batch_image_data.append(image.astype(np.float32))
-            batch_image_wh.append(ori_image.shape[:-1][::-1])
-            batch_gt_bboxes_dic.append(gt_bboxes_dic)
+            for bbox, class_index in zip(pred_bboxes, pred_classes):
+                xmin, ymin, xmax, ymax = bbox[:4].astype(np.int32)
+                conf = bbox[4]
+                class_name = CLASS_NAMES[class_index]
 
-            # calculate correct/confidence
-            if len(batch_image_data) == BATCH_SIZE:
-                pred_encode_data = sess.run(prediction_op, feed_dict = {input_var : batch_image_data, is_training : False})
+                string = "{} : {:.2f}%".format(class_name, conf * 100)
+                cv2.putText(image, string, (xmin, ymin - 10), 1, 1, (0, 255, 0))
+                cv2.rectangle(image, (xmin, ymin), (xmax, ymax), (0, 255, 0), 2)
 
-                for i in range(BATCH_SIZE):
-                    gt_bboxes_dic = batch_gt_bboxes_dic[i]
-                    for class_name in list(gt_bboxes_dic.keys()):
-                        gt_bboxes = np.asarray(gt_bboxes_dic[class_name], dtype = np.float32)
+            image = cv2.resize(image, (SAMPLE_IMAGE_WIDTH, SAMPLE_IMAGE_HEIGHT))
+            sample_images.append(image.copy())
+        
+        image_summary = sess.run(log_image_op, feed_dict = {log_image_var : sample_images})
+        train_writer.add_summary(image_summary, iter)
 
-                        gt_class = CLASS_DIC[class_name]
-                        all_ground_truths_dic[class_name] += gt_bboxes.shape[0]
-
-                        pred_bboxes, pred_classes = yolov1_utils.Decode(pred_encode_data[i], size = batch_image_wh[i], detect_threshold = 0.0, detect_class_names = [class_name], nms = True)
-
-                        if pred_bboxes.shape[0] == 0:
-                            pred_bboxes = np.zeros((1, 5), dtype = np.float32)
-
-                        ious = compute_bboxes_IoU(pred_bboxes, gt_bboxes)
-                        
-                        # ious >= 0.50 (AP@50)
-                        correct = np.max(ious, axis = 1) >= ap_threshold
-                        confidence = pred_bboxes[:, 4]
-
-                        correct_dic[class_name] += correct.tolist()
-                        confidence_dic[class_name] += confidence.tolist()
-
-                batch_image_data = []
-                batch_image_wh = []
-                batch_gt_bboxes_dic = []
-
-            sys.stdout.write('\r# Validation = {:.2f}%'.format(valid_iter / valid_xml_count * 100))
-            sys.stdout.flush()
-
-        if len(batch_image_data) != 0:
-            pred_encode_data = sess.run(prediction_op, feed_dict = {input_var : batch_image_data, is_training : False})
-
-            for i in range(len(batch_image_data)):
-                gt_bboxes_dic = batch_gt_bboxes_dic[i]
-                for class_name in list(gt_bboxes_dic.keys()):
-                    gt_bboxes = np.asarray(gt_bboxes_dic[class_name], dtype = np.float32)
-
-                    gt_class = CLASS_DIC[class_name]
-                    all_ground_truths_dic[class_name] += gt_bboxes.shape[0]
-                    
-                    pred_bboxes, pred_classes = yolov1_utils.Decode(pred_encode_data[i], size = batch_image_wh[i], detect_threshold = 0.0, detect_class_names = [class_name], nms = True)
-                    ious = compute_bboxes_IoU(pred_bboxes, gt_bboxes)
-
-                    # ious >= 0.50 (AP@50)
-                    correct = np.max(ious, axis = 1) >= ap_threshold
-                    confidence = pred_bboxes[:, 4]
-
-                    correct_dic[class_name] += correct.tolist()
-                    confidence_dic[class_name] += confidence.tolist()
-
-        valid_time = int(time.time() - valid_time)
-        print('\n[i] valid time = {}sec'.format(valid_time))
-
-        valid_mAP_list = []
-        for class_name in CLASS_NAMES:
-            if all_ground_truths_dic[class_name] == 0:
-                continue
-
-            correct_list = correct_dic[class_name]
-            confidence_list = confidence_dic[class_name]
-            correct_list = correct_dic[class_name]
-
-            # list -> numpy
-            confidence_list = np.asarray(confidence_list, dtype = np.float32)
-            correct_list = np.asarray(correct_list, dtype = np.bool)
+    if iter % SAVE_ITERATION == 0:
+        saver.save(sess, './model/YOLOv1_{}.ckpt'.format(iter))
             
-            # Ascending (confidence)
-            sort_indexs = confidence_list.argsort()[::-1]
-            confidence_list = confidence_list[sort_indexs]
-            correct_list = correct_list[sort_indexs]
-            
-            correct_detections = 0
-            all_detections = 0
-
-            # calculate precision/recall
-            precision_list = []
-            recall_list = []
-
-            for confidence, correct in zip(confidence_list, correct_list):
-                all_detections += 1
-                if correct:
-                    correct_detections += 1    
-                
-                precision = correct_detections / all_detections
-                recall = correct_detections / all_ground_truths
-                
-                precision_list.append(precision)
-                recall_list.append(recall)
-
-                # maximum correct detections
-                if recall == 1.0:
-                    break
-
-            precision_list = np.asarray(precision_list, dtype = np.float32)
-            recall_list = np.asarray(recall_list, dtype = np.float32)
-            
-            # calculating the interpolation performed in 11 points (0.0 -> 1.0, +0.01)
-            precision_interp_list = []
-            interp_list = np.arange(0, 10 + 1) / 10
-
-            for interp in interp_list:
-                try:
-                    precision_interp = max(precision_list[recall_list >= interp])
-                except:
-                    precision_interp = 0.0
-                
-                precision_interp_list.append(precision_interp)
-
-            ap = np.mean(precision_interp_list) * 100
-            valid_mAP_list.append(ap)
-
-        valid_mAP = np.mean(valid_mAP_list)
-        if best_valid_mAP < valid_mAP:
-            best_valid_mAP = valid_mAP
-            saver.save(sess, './model/YOLOv1_{}.ckpt'.format(iter))
-            
-        log_print('[i] valid mAP : {:.6f}, best valid mAP : {:.6f}'.format(valid_mAP, best_valid_mAP))
-
 saver.save(sess, './model/YOLOv1.ckpt')

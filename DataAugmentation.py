@@ -18,6 +18,18 @@ GAUSSIAN_NOISE = 0.1
 SHIFT = 0.1
 CROP = 0.1
 
+# # Test DataAugmentation
+# FLIP_HORIZONTAL = 1.0
+# FLIP_VERTICAL = 1.0
+# SCALE = 1.0
+# BRIGHTNESS = 1.0
+# HUE = 1.0
+# SATURATION = 1.0
+# GRAY = 1.0
+# GAUSSIAN_NOISE = 1.0
+# SHIFT = 1.0
+# CROP = 1.0
+
 def random_horizontal_flip(image, gt_bboxes = None, threshold = FLIP_HORIZONTAL):
     if random.random() <= threshold:
         image = cv2.flip(image, 1).copy()

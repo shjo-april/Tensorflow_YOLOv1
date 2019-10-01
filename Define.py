@@ -9,9 +9,12 @@ CLASS_DIC = {class_name : index for index, class_name in enumerate(CLASS_NAMES)}
 CLASSES = len(CLASS_NAMES)
 
 # network parameters
-IMAGE_HEIGHT = 448
-IMAGE_WIDTH = 448
+IMAGE_HEIGHT = 416
+IMAGE_WIDTH = 416
 IMAGE_CHANNEL = 3
+
+SAMPLE_IMAGE_HEIGHT = 224
+SAMPLE_IMAGE_WIDTH = 224
 
 # ResNet (Normalize), OpenCV BGR -> RGB
 R_MEAN = 123.68
@@ -19,13 +22,13 @@ G_MEAN = 116.78
 B_MEAN = 103.94
 MEAN = [R_MEAN, G_MEAN, B_MEAN]
 
-DIVIDE = 2 ** 6
+DIVIDE = 2 ** 5
 
 S = IMAGE_WIDTH // DIVIDE
 B = 2
 
 # use thread (Dataset)
-NUM_THREADS = 10
+NUM_THREADS = 4
 
 SAMPLES = 5
 

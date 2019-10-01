@@ -54,9 +54,8 @@ def YOLOv1_ResNetv1_50(input_var, is_training, reuse = False):
         x = end_points['resnet_v1_50/block4']
 
         x = conv_bn_relu(x, 512, [3, 3], 1, 'same', is_training, 'conv1')
-        x = tf.layers.max_pooling2d(x, pool_size = [2, 2], strides = 2)
-        
         x = conv_bn_relu(x, B * (5 + CLASSES), [1, 1], 1, 'valid', is_training, 'conv2', bn = False, activation = False)
+        
         pred_tensors = tf.reshape(x, (-1, S, S, B, 5 + CLASSES), name = 'pred_tensors')
         
     pred_tensors = Decode_Layer(pred_tensors)

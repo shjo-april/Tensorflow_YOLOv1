@@ -110,6 +110,9 @@ def xyxy_to_ccwh(bbox):
 
     return np.asarray([cx, cy, width, height], dtype = np.float32)
 
+def convert_bboxes(bboxes, image_wh, ori_wh = [IMAGE_WIDTH, IMAGE_HEIGHT]):
+    return bboxes / (ori_wh * 2) * (image_wh * 2)
+
 def one_hot(label, classes = CLASSES):
     vector = np.zeros(classes, dtype = np.float32)
     vector[label] = 1.
@@ -139,7 +142,7 @@ def nms(dets, thresh):
     
     areas = (x2 - x1 + 1) * (y2 - y1 + 1)
     order = scores.argsort()[::-1]
-
+    
     keep = []
     while order.size > 0:
         i = order[0]
