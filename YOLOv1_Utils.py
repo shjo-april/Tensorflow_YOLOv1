@@ -24,7 +24,7 @@ class YOLOv1_Utils:
             label_data[grid_y, grid_x, :, 5:] = one_hot(class_index)
 
         return label_data
-
+    
     def Decode(self, encode_data, detect_threshold = 0.4, size = [IMAGE_WIDTH, IMAGE_HEIGHT], use_nms = False):
         encode_data = encode_data.reshape((-1, 5 + CLASSES))
         
@@ -33,6 +33,11 @@ class YOLOv1_Utils:
         pred_confs = encode_data[pos_mask, 4][..., np.newaxis]
         pred_bboxes = convert_bboxes(encode_data[pos_mask, :4], size)
         pred_classes = np.argmax(encode_data[pos_mask, 5:], axis = 1)
+        
+        pred_bboxes[:, 0] = np.minimum(np.maximum(pred_bboxes[:, 0], 0), size[0])
+        pred_bboxes[:, 1] = np.minimum(np.maximum(pred_bboxes[:, 1], 0), size[1])
+        pred_bboxes[:, 2] = np.minimum(np.maximum(pred_bboxes[:, 2], 0), size[0])
+        pred_bboxes[:, 3] = np.minimum(np.maximum(pred_bboxes[:, 3], 0), size[1])
 
         pred_bboxes = np.concatenate([pred_bboxes, pred_confs], axis = -1)
         

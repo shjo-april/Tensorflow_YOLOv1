@@ -73,7 +73,7 @@ log_image_op = tf.summary.image('Image/Train', log_image_var[..., ::-1], SAMPLES
 sess = tf.Session()
 sess.run(tf.global_variables_initializer())
 
-# '''
+'''
 pretrained_vars = []
 for var in vars:
     if 'resnet_v1_50' in var.name:
@@ -81,10 +81,10 @@ for var in vars:
 
 pretrained_saver = tf.train.Saver(var_list = pretrained_vars)
 pretrained_saver.restore(sess, './resnet_v1_model/resnet_v1_50.ckpt')
-# '''
+'''
 
 saver = tf.train.Saver(max_to_keep = 30)
-# saver.restore(sess, './model/YOLOv1_{}.ckpt'.format(115000))
+saver.restore(sess, './model/YOLOv1_{}.ckpt'.format(90000))
 
 best_valid_mAP = 0.0
 learning_rate = INIT_LEARNING_RATE
@@ -115,7 +115,7 @@ for i in range(NUM_THREADS):
     train_thread.start()
     train_threads.append(train_thread)
 
-for iter in range(1, max_iteration + 1):
+for iter in range(1 + 90000, max_iteration + 1):
     if iter in decay_iteration:
         learning_rate /= 10
         log_print('[i] learning rate decay : {} -> {}'.format(learning_rate * 10, learning_rate))
@@ -151,7 +151,7 @@ for iter in range(1, max_iteration + 1):
         train_time = int(time.time() - train_time)
         
         log_print('[i] iter : {}, loss : {:.4f}, giou_loss : {:.4f}, conf_loss : {:.4f}, class_loss : {:.4f}, l2_reg_loss : {:.4f}, train_time : {}sec'.format(iter, loss, giou_loss, conf_loss, class_loss, l2_reg_loss, train_time))
-
+        
         loss_list = []
         giou_loss_list = []
         conf_loss_list = []
@@ -160,22 +160,30 @@ for iter in range(1, max_iteration + 1):
         train_time = time.time()
 
     if iter % SAMPLE_ITERATION == 0:
-        sample_images = []
+        total_gt_bboxes = []
         batch_image_data = np.zeros((SAMPLES, IMAGE_HEIGHT, IMAGE_WIDTH, IMAGE_CHANNEL), dtype = np.float32)
 
         for i, data in enumerate(sample_data_list):
             image_name, gt_bboxes, gt_classes = data
 
             image = cv2.imread(ROOT_DIR + image_name)
+            image_h, image_w, image_c = image.shape
+
             tf_image = cv2.resize(image, (IMAGE_WIDTH, IMAGE_HEIGHT), interpolation = cv2.INTER_CUBIC)
 
+            gt_bboxes = np.asarray(gt_bboxes, dtype = np.float32)
+            gt_bboxes /= [image_w, image_h, image_w, image_h]
+            gt_bboxes *= [IMAGE_WIDTH, IMAGE_HEIGHT, IMAGE_WIDTH, IMAGE_HEIGHT]
+
             batch_image_data[i] = tf_image.copy()
+            total_gt_bboxes.append(gt_bboxes)
         
         total_pred_data = sess.run(pred_tensors, feed_dict = {input_var : batch_image_data, is_training : False})
         
+        sample_images = []
         for i in range(SAMPLES):
             image = batch_image_data[i]
-            pred_bboxes, pred_classes = yolov1_utils.Decode(total_pred_data[i], detect_threshold = 0.20, size = [IMAGE_WIDTH, IMAGE_HEIGHT])
+            pred_bboxes, pred_classes = yolov1_utils.Decode(total_pred_data[i], detect_threshold = 0.05, size = [IMAGE_WIDTH, IMAGE_HEIGHT], use_nms = True)
             
             for bbox, class_index in zip(pred_bboxes, pred_classes):
                 xmin, ymin, xmax, ymax = bbox[:4].astype(np.int32)
@@ -185,6 +193,10 @@ for iter in range(1, max_iteration + 1):
                 string = "{} : {:.2f}%".format(class_name, conf * 100)
                 cv2.putText(image, string, (xmin, ymin - 10), 1, 1, (0, 255, 0))
                 cv2.rectangle(image, (xmin, ymin), (xmax, ymax), (0, 255, 0), 2)
+
+            for gt_bbox in total_gt_bboxes[i]:
+                xmin, ymin, xmax, ymax = gt_bbox.astype(np.int32)
+                cv2.rectangle(image, (xmin, ymin), (xmax, ymax), (0, 0, 255), 2)
 
             image = cv2.resize(image, (SAMPLE_IMAGE_WIDTH, SAMPLE_IMAGE_HEIGHT))
             sample_images.append(image.copy())
